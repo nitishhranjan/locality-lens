@@ -33,8 +33,25 @@ def create_graph() -> StateGraph:
     # Set entry point
     graph.set_entry_point("validate_input")
     
-    # Add edges - linear flow for MVP
-    graph.add_edge("validate_input", "geocode_location")
+    # Conditional routing after validation
+    def route_after_validate(state: LocalityState) -> str:
+        """Route based on validation result."""
+        if state.get("errors"):
+            return "error"
+        # Check if coordinates already exist (from validate_input)
+        if state.get("coordinates"):
+            return "skip_geocode"  # Skip geocoding, go straight to fetch
+        return "geocode"  # Need to geocode
+    
+    graph.add_conditional_edges(
+        "validate_input",
+        route_after_validate,
+        {
+            "error": "handle_error",
+            "skip_geocode": "fetch_osm_data",  # Skip geocoding
+            "geocode": "geocode_location"
+        }
+    )
     
     # Conditional routing after geocoding
     def route_after_geocode(state: LocalityState) -> str:
