@@ -1,4 +1,3 @@
-cat > .gitignore << 'EOF'
 # Environment variables
 .env
 .env.local
@@ -51,4 +50,3 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
-EOF
