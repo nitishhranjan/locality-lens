@@ -21,7 +21,7 @@ def test_graph():
     print("OSM data fetching may take 30-60 seconds, please wait...\n")
     
     initial_state: LocalityState = {
-        "user_input": "12.9784, 77.6408",  # Use coordinates directly
+        "user_input": "cyber city, Gurgaon",  # Use coordinates directly
         "user_profile": None,
         "coordinates": None,
         "address": None,
@@ -88,11 +88,21 @@ def test_graph():
             for key, value in result["statistics"].items():
                 print(f"  {key}: {value}")
         
-        if result.get("osm_data"):
-            print("\nOSM Data Summary:")
-            for key, value in result["osm_data"].items():
-                if isinstance(value, dict) and "count" in value:
-                    print(f"  {key}: {value['count']} found")
+                if result.get("osm_data"):
+                    print("\nOSM Data Summary:")
+                    for key, value in result["osm_data"].items():
+                        if isinstance(value, dict) and "count" in value:
+                            print(f"  {key}: {value['count']} found")
+                
+                # ADD THIS SECTION TO DISPLAY SUMMARY
+                if result.get("summary"):
+                    print("\n" + "=" * 60)
+                    print("AI-Generated Summary:")
+                    print("=" * 60)
+                    print(result["summary"])
+                    print("=" * 60)
+                else:
+                    print("\n⚠️ No summary generated")
     
     except KeyboardInterrupt:
         print("\n\nWorkflow interrupted by user")

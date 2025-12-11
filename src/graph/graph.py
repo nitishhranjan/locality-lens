@@ -9,7 +9,8 @@ from .nodes import (
     geocode_location,
     fetch_osm_data,
     calculate_statistics,
-    handle_error
+    handle_error,
+    generate_summary
 )
 
 
@@ -28,6 +29,7 @@ def create_graph() -> StateGraph:
     graph.add_node("geocode_location", geocode_location)
     graph.add_node("fetch_osm_data", fetch_osm_data)
     graph.add_node("calculate_statistics", calculate_statistics)
+    graph.add_node("generate_summary", generate_summary)
     graph.add_node("handle_error", handle_error)
     
     # Set entry point
@@ -87,12 +89,29 @@ def create_graph() -> StateGraph:
         }
     )
     
-    # After calculating statistics
-    graph.add_edge("calculate_statistics", END)
-    graph.add_edge("handle_error", END)
+    # # After calculating statistics
+    # graph.add_edge("calculate_statistics", END)
+    # graph.add_edge("handle_error", END)
     
-    return graph
 
+    def route_after_calculate(state: LocalityState) -> str:
+        """Route after statistics calculation"""
+        if state.get("errors"):
+            return "error"
+        return "generate_summary"
+    
+    graph.add_conditional_edges(
+        "calculate_statistics",
+        route_after_calculate,
+        {
+            "error": "handle_error",
+            "generate_summary": "generate_summary"
+        }       
+    )
+    graph.add_edge("generate_summary", END)
+    graph.add_edge("handle_error", END)
+
+    return graph
 
 def compile_graph() -> StateGraph:
     """

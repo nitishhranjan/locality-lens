@@ -1,15 +1,24 @@
 """
 Graph nodes for Locality Lens workflow.
+
 Each node is a function that takes state, performs work, and returns updated state.
 """
 import os
 import ssl
+import json
+import warnings
+from typing import Dict, Any
+from urllib.parse import quote, urlencode
+
+import requests
 import urllib3
+import urllib3.poolmanager
 
 # ============================================================================
-# FIX SSL ISSUES: Corporate Proxy/Firewall SSL Inspection
+# SSL Configuration: Corporate Proxy/Firewall SSL Inspection
 # ============================================================================
-# This must be done BEFORE importing requests/osmnx
+# This must be done BEFORE importing requests/osmnx to handle SSL issues
+# in corporate proxy environments.
 
 # Disable SSL verification at Python level
 ssl._create_default_https_context = ssl._create_unverified_context
@@ -18,10 +27,6 @@ ssl._create_default_https_context = ssl._create_unverified_context
 os.environ['PYTHONHTTPSVERIFY'] = '0'
 os.environ['CURL_CA_BUNDLE'] = ''
 os.environ['REQUESTS_CA_BUNDLE'] = ''
-
-# Import and patch requests/urllib3 BEFORE OSMnx
-import requests
-import urllib3.poolmanager
 
 # Disable SSL warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -42,49 +47,45 @@ urllib3.poolmanager.PoolManager.__init__ = _patched_poolmanager_init
 _original_get = requests.get
 _original_post = requests.post
 _original_session_request = requests.Session.request
+_original_adapter_send = requests.adapters.HTTPAdapter.send
 
 def _patched_get(*args, **kwargs):
+    """Patched requests.get with SSL verification disabled."""
     kwargs.setdefault('verify', False)
     return _original_get(*args, **kwargs)
 
 def _patched_post(*args, **kwargs):
+    """Patched requests.post with SSL verification disabled."""
     kwargs.setdefault('verify', False)
     return _original_post(*args, **kwargs)
 
 def _patched_session_request(self, *args, **kwargs):
+    """Patched Session.request with SSL verification disabled."""
     kwargs.setdefault('verify', False)
     return _original_session_request(self, *args, **kwargs)
 
-requests.get = _patched_get
-requests.post = _patched_post
-requests.Session.request = _patched_session_request
-
-# Patch HTTPAdapter (what OSMnx actually uses internally)
-_original_adapter_send = requests.adapters.HTTPAdapter.send
-
 def _patched_adapter_send(self, request, *args, **kwargs):
-    """Patch HTTPAdapter.send - this is what OSMnx uses."""
+    """Patched HTTPAdapter.send with SSL verification disabled."""
     kwargs.setdefault('verify', False)
     return _original_adapter_send(self, request, *args, **kwargs)
 
+# Apply patches
+requests.get = _patched_get
+requests.post = _patched_post
+requests.Session.request = _patched_session_request
 requests.adapters.HTTPAdapter.send = _patched_adapter_send
 
-# NOW import OSMnx and other libraries (after SSL patches)
+# Import geospatial libraries (after SSL patches)
 import osmnx as ox
 import geopandas as gpd
 from shapely.geometry import Point
-from geopy.geocoders import Nominatim
-from geopy.exc import GeocoderTimedOut, GeocoderServiceError
-import warnings
 
+# Configure OSMnx
 warnings.filterwarnings('ignore')
-
-# Configure OSMnx EXACTLY like your notebook
 ox.settings.log_console = True
 ox.settings.use_cache = True
 ox.settings.timeout = 300
 
-from typing import Dict, Any
 from .state import LocalityState
 
 def validate_input(state: LocalityState) -> LocalityState:
@@ -145,9 +146,6 @@ def geocode_location(state: LocalityState) -> LocalityState:
         return state
     
     try:
-        # Use requests directly to bypass SSL issues
-        from urllib.parse import quote
-        
         url = "https://nominatim.openstreetmap.org/search"
         params = {
             'q': user_input,
@@ -158,7 +156,6 @@ def geocode_location(state: LocalityState) -> LocalityState:
             'User-Agent': 'locality-lens'  # Required by Nominatim
         }
         
-        # Disable SSL verification for corporate/proxy environments
         response = requests.get(url, params=params, headers=headers, timeout=10, verify=False)
         
         if response.status_code == 200:
@@ -179,19 +176,16 @@ def geocode_location(state: LocalityState) -> LocalityState:
             state["errors"].append(f"Geocoding API returned status {response.status_code}")
             state["processing_steps"].append(f"geocode_location: ERROR - API status {response.status_code}")
     
-    except requests.exceptions.SSLError as e:
+    except requests.exceptions.SSLError:
         # If SSL still fails, try with urllib3
         try:
             http = urllib3.PoolManager(cert_reqs='CERT_NONE')
-            from urllib.parse import urlencode
-            
             params = urlencode({'q': user_input, 'format': 'json', 'limit': 1})
             url = f"https://nominatim.openstreetmap.org/search?{params}"
             
             response = http.request('GET', url, headers={'User-Agent': 'locality-lens'})
             
             if response.status == 200:
-                import json
                 data = json.loads(response.data.decode('utf-8'))
                 if data:
                     location_data = data[0]
@@ -219,23 +213,30 @@ def geocode_location(state: LocalityState) -> LocalityState:
 
 def fetch_osm_data(state: LocalityState) -> LocalityState:
     """
-    Fetch ALL POIs in one query, then classify and clean.
+    Fetch OpenStreetMap POI data around the location.
+    
+    Uses a single optimized query to fetch all POI categories, then classifies
+    and cleans the data for improved accuracy.
+    
+    Args:
+        state: Current workflow state
+        
+    Returns:
+        Updated state with OSM data populated
     """
     coordinates = state.get("coordinates")
     
     if not coordinates:
-        state["errors"].append("No coordinates available")
+        state["errors"].append("No coordinates available for OSM data fetching")
         state["next_action"] = "error"
         return state
     
     lat, lon = coordinates
     location_point = (lat, lon)
-    radius = 2000
-    
-    print("\n🗺️  Fetching ALL POIs in one query...")
+    radius = 2000  # 2km radius
     
     try:
-        # SINGLE QUERY for everything
+        # Single optimized query for all POI categories
         all_pois = ox.features_from_point(
             location_point,
             tags={
@@ -247,9 +248,6 @@ def fetch_osm_data(state: LocalityState) -> LocalityState:
             },
             dist=radius
         )
-        
-        print(f"   ✅ Fetched {len(all_pois)} total POIs")
-        print("   🔍 Classifying and cleaning POIs...")
         
         osm_data = {}
         
@@ -288,33 +286,29 @@ def fetch_osm_data(state: LocalityState) -> LocalityState:
             bus_stops = clean_and_deduplicate_pois(bus_stops, "bus stops")
             osm_data["bus_stops"] = {"count": len(bus_stops), "data": []}
         
-        print("   ✅ Classification and cleaning complete!")
-        
         state["osm_data"] = osm_data
         state["next_action"] = "calculate_statistics"
-        state["processing_steps"].append(f"fetch_osm_data: SUCCESS - Fetched, classified, and cleaned {len(osm_data)} POI categories")
+        state["processing_steps"].append(
+            f"fetch_osm_data: SUCCESS - Fetched, classified, and cleaned {len(osm_data)} POI categories"
+        )
         
     except Exception as e:
-        print(f"\n❌ Error: {str(e)}")
         state["errors"].append(f"Error fetching OSM data: {str(e)}")
         state["next_action"] = "error"
+        state["processing_steps"].append(f"fetch_osm_data: ERROR - {str(e)}")
     
     return state
 
 
-def clean_and_deduplicate_pois(gdf, category_name=""):
+def clean_and_deduplicate_pois(gdf: gpd.GeoDataFrame, category_name: str = "") -> gpd.GeoDataFrame:
     """
     Clean and deduplicate POI GeoDataFrame.
     
-    Steps:
-    1. Remove entries without geometry
-    2. Remove entries with invalid geometry
-    3. Deduplicate by normalized name (case-insensitive)
-    4. Optional: Deduplicate by location proximity
+    Removes invalid entries and deduplicates by normalized name and location.
     
     Args:
         gdf: GeoDataFrame with POIs
-        category_name: Category name for logging
+        category_name: Category name for logging (optional)
     
     Returns:
         Cleaned GeoDataFrame
@@ -324,68 +318,40 @@ def clean_and_deduplicate_pois(gdf, category_name=""):
     
     original_count = len(gdf)
     
-    # 1. Remove entries without geometry
+    # Remove entries without valid geometry
     if 'geometry' in gdf.columns:
-        # Remove null geometries
         gdf = gdf[gdf['geometry'].notna()]
-        # Remove empty geometries
         gdf = gdf[~gdf['geometry'].is_empty]
-        # Remove invalid geometries
         gdf = gdf[gdf['geometry'].is_valid]
     
-    # 2. Deduplicate by name (case-insensitive, normalized)
+    # Deduplicate by normalized name (case-insensitive)
     if 'name' in gdf.columns:
-        # Create normalized name column
         gdf['_name_normalized'] = (
             gdf['name']
-            .fillna('')  # Fill NaN with empty string
+            .fillna('')
             .astype(str)
-            .str.lower()  # Lowercase
-            .str.strip()  # Remove whitespace
-            .str.replace(r'\s+', ' ', regex=True)  # Normalize whitespace
+            .str.lower()
+            .str.strip()
+            .str.replace(r'\s+', ' ', regex=True)
         )
-        
-        # Remove exact duplicates by normalized name
-        # Keep first occurrence
         gdf = gdf.drop_duplicates(subset=['_name_normalized'], keep='first')
-        
-        # Optional: Remove entries with empty names
-        # Uncomment if you want to exclude unnamed POIs
-        # gdf = gdf[gdf['_name_normalized'] != '']
-        
-        # Drop temporary column
         gdf = gdf.drop(columns=['_name_normalized'], errors='ignore')
     
-    # 3. Additional: Deduplicate by location (if same name at very close location)
-    # This handles cases like "School" at (12.9784, 77.6408) and "School" at (12.9785, 77.6409)
+    # Deduplicate by location (if same name at same location)
     if 'name' in gdf.columns and 'geometry' in gdf.columns and not gdf.empty:
         try:
-            # Group by name, check for very close geometries
-            # Use buffer to find duplicates within 10 meters
-            from shapely.geometry import Point
-            
-            # For entries with same normalized name, check proximity
-            if 'name' in gdf.columns:
-                # Create normalized name again for grouping
-                gdf['_name_norm'] = gdf['name'].fillna('').astype(str).str.lower().str.strip()
-                
-                # Group by name and check for spatial duplicates
-                # Simple approach: if same name and geometry is very similar, keep one
-                gdf = gdf.drop_duplicates(
-                    subset=['_name_norm', 'geometry'], 
-                    keep='first'
-                )
-                
-                gdf = gdf.drop(columns=['_name_norm'], errors='ignore')
-        except Exception as e:
+            gdf['_name_norm'] = gdf['name'].fillna('').astype(str).str.lower().str.strip()
+            gdf = gdf.drop_duplicates(subset=['_name_norm', 'geometry'], keep='first')
+            gdf = gdf.drop(columns=['_name_norm'], errors='ignore')
+        except Exception:
             # If spatial deduplication fails, continue with name-only deduplication
             pass
     
     cleaned_count = len(gdf)
     removed = original_count - cleaned_count
     
-    if removed > 0 and category_name:
-        print(f"      🧹 {category_name}: {original_count} → {cleaned_count} (removed {removed} duplicates/invalid)")
+    # Note: Processing steps are tracked in the calling function
+    # This keeps the cleaning function pure and reusable
     
     return gdf
 
@@ -394,7 +360,13 @@ def calculate_statistics(state: LocalityState) -> LocalityState:
     """
     Calculate statistics from OSM data.
     
-    SIMPLIFIED VERSION - Fast calculations only.
+    Computes key metrics including POI counts, density, and connectivity indicators.
+    
+    Args:
+        state: Current workflow state with OSM data
+        
+    Returns:
+        Updated state with calculated statistics
     """
     osm_data = state.get("osm_data", {})
     coordinates = state.get("coordinates")
@@ -409,12 +381,10 @@ def calculate_statistics(state: LocalityState) -> LocalityState:
         state["next_action"] = "error"
         return state
     
-    statistics = {}
-    
     try:
-        print("   📊 Calculating statistics...", end="", flush=True)
+        statistics = {}
         
-        # Basic counts (fast - just reading from dict)
+        # Extract counts from OSM data
         statistics["school_count"] = osm_data.get("schools", {}).get("count", 0)
         statistics["hospital_count"] = osm_data.get("hospitals", {}).get("count", 0)
         statistics["park_area_km2"] = osm_data.get("parks", {}).get("area_km2", 0.0)
@@ -422,13 +392,13 @@ def calculate_statistics(state: LocalityState) -> LocalityState:
         statistics["metro_station_count"] = osm_data.get("metro_stations", {}).get("count", 0)
         statistics["bus_stop_count"] = osm_data.get("bus_stops", {}).get("count", 0)
         
-        # Simplified metro distance
+        # Metro distance indicator
         if statistics["metro_station_count"] > 0:
-            statistics["nearest_metro_distance_km"] = "< 5km"  # Simplified
+            statistics["nearest_metro_distance_km"] = "< 5km"
         else:
             statistics["nearest_metro_distance_km"] = None
         
-        # Calculate POI density
+        # Calculate POI density (POIs per km²)
         area_km2 = 12.57  # π * (2km)²
         total_pois = (
             statistics["school_count"] +
@@ -439,14 +409,11 @@ def calculate_statistics(state: LocalityState) -> LocalityState:
         )
         statistics["poi_density"] = round(total_pois / area_km2, 2) if area_km2 > 0 else 0.0
         
-        print(" ✓")
-        
         state["statistics"] = statistics
         state["next_action"] = "end"
         state["processing_steps"].append("calculate_statistics: SUCCESS - Statistics calculated")
         
     except Exception as e:
-        print(f" ✗ Error: {str(e)}")
         state["errors"].append(f"Error calculating statistics: {str(e)}")
         state["next_action"] = "error"
         state["processing_steps"].append(f"calculate_statistics: ERROR - {str(e)}")
@@ -473,3 +440,50 @@ def handle_error(state: LocalityState) -> LocalityState:
     state["processing_steps"].append("handle_error: Error handling completed")
     
     return state
+
+
+def generate_summary(state: LocalityState) -> LocalityState:
+    """
+    Generate a summary of the locality using the LLM.
+    """
+    statistics = state.get("statistics", {})
+    osm_data = state.get("osm_data", {})
+    address = state.get("address", "")
+
+    if not statistics and not osm_data:
+        state["errors"].append("No data available for summary generation")
+        state["next_action"] = "error"
+        return state
+
+    try:
+        from src.llm.summary_generator import generate_summary
+        summary = generate_summary(statistics, osm_data, address)
+        state["summary"] = summary
+        state["next_action"] = "end"
+        state["processing_steps"].append("generate_summary: SUCCESS - Summary generated")
+        return state
+    except Exception as e:
+        print(f"⚠️ Error generating summary: {e}")
+        state["warnings"].append(f"Could not generate summary: {str(e)}")
+        # Don't fail - provide basic summary
+        state["summary"] = create_fallback_summary(statistics, osm_data)
+        state["processing_steps"].append(f"generate_summary: WARNING - Used fallback summary")
+    
+    return state
+
+def create_fallback_summary(statistics: dict, osm_data: dict) -> str:
+    """Create a basic summary if LLM fails."""
+    lines = ["Locality Analysis Summary:\n"]
+    
+    if statistics:
+        lines.append("Key Statistics:")
+        for key, value in list(statistics.items())[:5]:
+            lines.append(f"- {key.replace('_', ' ').title()}: {value}")
+    
+    if osm_data:
+        lines.append("\nNearby Facilities:")
+        for category, data in list(osm_data.items())[:5]:
+            count = data.get("count", 0)
+            lines.append(f"- {category.replace('_', ' ').title()}: {count}")
+    
+    return "\n".join(lines)
