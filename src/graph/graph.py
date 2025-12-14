@@ -7,10 +7,11 @@ from .state import LocalityState
 from .nodes import (
     validate_input,
     geocode_location,
+    extract_intent_and_select_metrics,
     fetch_osm_data,
     calculate_statistics,
     handle_error,
-    generate_summary
+    generate_summary,
 )
 
 
@@ -26,6 +27,7 @@ def create_graph() -> StateGraph:
     
     # Add nodes
     graph.add_node("validate_input", validate_input)
+    graph.add_node("extract_intent_and_select_metrics", extract_intent_and_select_metrics)
     graph.add_node("geocode_location", geocode_location)
     graph.add_node("fetch_osm_data", fetch_osm_data)
     graph.add_node("calculate_statistics", calculate_statistics)
@@ -35,29 +37,55 @@ def create_graph() -> StateGraph:
     # Set entry point
     graph.set_entry_point("validate_input")
     
-    # Conditional routing after validation
+    # ========================================================================
+    # ROUTING AFTER VALIDATION
+    # ========================================================================
     def route_after_validate(state: LocalityState) -> str:
         """Route based on validation result."""
         if state.get("errors"):
             return "error"
-        # Check if coordinates already exist (from validate_input)
-        if state.get("coordinates"):
-            return "skip_geocode"  # Skip geocoding, go straight to fetch
-        return "geocode"  # Need to geocode
+        # Always start parallel execution after validation
+        return "parallel_start"
     
     graph.add_conditional_edges(
         "validate_input",
         route_after_validate,
         {
             "error": "handle_error",
-            "skip_geocode": "fetch_osm_data",  # Skip geocoding
-            "geocode": "geocode_location"
+            "parallel_start": "extract_intent_and_select_metrics"
+        }
+    )
+
+    # ========================================================================
+    # PARALLEL EXECUTION: Intent extraction + Geocoding/OSM fetch
+    # ========================================================================
+    # After intent extraction, route to geocoding or OSM fetch
+    def route_after_intent(state: LocalityState) -> str:
+        """Route after intent extraction - check if coordinates exist."""
+        if state.get("errors"):
+            return "error"
+        if state.get("coordinates"):
+            # Coordinates exist - go directly to OSM fetch
+            return "fetch_osm"
+        # Need geocoding
+        return "geocode"
+    
+    graph.add_conditional_edges(
+        "extract_intent_and_select_metrics",
+        route_after_intent,
+        {
+            "error": "handle_error",
+            "fetch_osm": "fetch_osm_data",  # Parallel path 1: OSM fetch
+            "geocode": "geocode_location"    # Parallel path 2: Geocoding
         }
     )
     
-    # Conditional routing after geocoding
+    
+    # ========================================================================
+    # AFTER GEOCODING: Fetch OSM data
+    # ========================================================================
     def route_after_geocode(state: LocalityState) -> str:
-        """Route based on geocoding result."""
+        """Route after geocoding."""
         if state.get("errors"):
             return "error"
         if state.get("coordinates"):
@@ -73,11 +101,28 @@ def create_graph() -> StateGraph:
         }
     )
     
-    # After fetching OSM data
+    # ========================================================================
+    # AFTER OSM FETCH: Calculate statistics (needs both OSM data + selected_metrics)
+    # ========================================================================
     def route_after_fetch(state: LocalityState) -> str:
-        """Route based on fetch result."""
+        """Route after OSM fetch - ensure both OSM data and selected_metrics exist."""
         if state.get("errors"):
             return "error"
+        
+        # Check if both required data is available
+        osm_data = state.get("osm_data", {})
+        selected_metrics = state.get("selected_metrics", [])
+        
+        if not osm_data:
+            return "error"
+        
+        # If no metrics selected yet, wait or use defaults
+        if not selected_metrics:
+            # Intent extraction might still be running - this shouldn't happen
+            # but handle gracefully
+            from src.analysis.metrics_catalog import get_default_metrics_for_profile
+            state["selected_metrics"] = get_default_metrics_for_profile("general")
+        
         return "calculate"
     
     graph.add_conditional_edges(
@@ -89,11 +134,9 @@ def create_graph() -> StateGraph:
         }
     )
     
-    # # After calculating statistics
-    # graph.add_edge("calculate_statistics", END)
-    # graph.add_edge("handle_error", END)
-    
-
+    # ========================================================================
+    # AFTER CALCULATION: Generate summary
+    # ========================================================================
     def route_after_calculate(state: LocalityState) -> str:
         """Route after statistics calculation"""
         if state.get("errors"):
