@@ -279,17 +279,17 @@ def fetch_osm_data(state: LocalityState) -> LocalityState:
                 schools = all_pois[all_pois['amenity'] == 'school'].copy()
                 schools = clean_and_deduplicate_pois(schools, "schools")
                 osm_data["schools"] = {"count": len(schools), "data": []}
-                
+            
                 # Hospitals & Clinics
                 hospitals = all_pois[all_pois['amenity'].isin(['hospital', 'clinic', 'doctors', 'dentist'])].copy()
                 hospitals = clean_and_deduplicate_pois(hospitals, "hospitals")
                 osm_data["hospitals"] = {"count": len(hospitals), "data": []}
                 
-                # Restaurants (combined)
+                    # Restaurants (combined)
                 restaurants = all_pois[all_pois['amenity'].isin(['restaurant', 'cafe', 'fast_food', 'food_court'])].copy()
                 restaurants = clean_and_deduplicate_pois(restaurants, "restaurants")
                 osm_data["restaurants"] = {"count": len(restaurants), "data": []}
-            
+        
                 # Cafes (separate)
                 cafes = all_pois[all_pois['amenity'] == 'cafe'].copy()
                 cafes = clean_and_deduplicate_pois(cafes, "cafes")
@@ -367,7 +367,7 @@ def fetch_osm_data(state: LocalityState) -> LocalityState:
                 parks = clean_and_deduplicate_pois(parks, "parks")
                 estimated_area = len(parks) * 0.15  # Rough estimate
                 osm_data["parks"] = {"count": len(parks), "area_km2": round(estimated_area, 2), "data": []}
-            
+        
                 # Playgrounds
                 playgrounds = all_pois[all_pois['leisure'] == 'playground'].copy()
                 playgrounds = clean_and_deduplicate_pois(playgrounds, "playgrounds")
@@ -381,15 +381,15 @@ def fetch_osm_data(state: LocalityState) -> LocalityState:
             # Transportation
             if 'railway' in all_pois.columns:
                 metro = all_pois[all_pois['railway'] == 'station'].copy()
-                if 'station' in all_pois.columns:
-                    metro = metro[metro['station'].isin(['subway', 'metro'])]
+            if 'station' in all_pois.columns:
+                metro = metro[metro['station'].isin(['subway', 'metro'])]
                 metro = clean_and_deduplicate_pois(metro, "metro")
-                osm_data["metro_stations"] = {"count": len(metro), "data": []}
-            
+            osm_data["metro_stations"] = {"count": len(metro), "data": []}
+        
             if 'highway' in all_pois.columns:
                 bus_stops = all_pois[all_pois['highway'] == 'bus_stop'].copy()
                 bus_stops = clean_and_deduplicate_pois(bus_stops, "bus_stops")
-                osm_data["bus_stops"] = {"count": len(bus_stops), "data": []}
+            osm_data["bus_stops"] = {"count": len(bus_stops), "data": []}
         
             # Shopping
             if 'shop' in all_pois.columns:
@@ -539,9 +539,9 @@ def clean_and_deduplicate_pois(gdf: gpd.GeoDataFrame, category_name: str = "") -
     # Deduplicate by location (if same name at same location)
     if 'name' in gdf.columns and 'geometry' in gdf.columns and not gdf.empty:
         try:
-            gdf['_name_norm'] = gdf['name'].fillna('').astype(str).str.lower().str.strip()
-            gdf = gdf.drop_duplicates(subset=['_name_norm', 'geometry'], keep='first')
-            gdf = gdf.drop(columns=['_name_norm'], errors='ignore')
+                gdf['_name_norm'] = gdf['name'].fillna('').astype(str).str.lower().str.strip()
+                gdf = gdf.drop_duplicates(subset=['_name_norm', 'geometry'], keep='first')
+                gdf = gdf.drop(columns=['_name_norm'], errors='ignore')
         except Exception:
             # If spatial deduplication fails, continue with name-only deduplication
             pass

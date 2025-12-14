@@ -22,20 +22,16 @@ Locality Lens is an intelligent location analysis tool that provides data-driven
 Built with a modular, production-ready architecture using LangGraph:
 
 ```
-User Input (Location + Profile)
-    ↓
-┌─────────────────────────────────────┐
-│  LangGraph Workflow                 │
-│  ┌───────────────────────────────┐  │
-│  │ 1. Validate Input             │  │
-│  │ 2. Geocode Location           │  │
-│  │ 3. Fetch OSM Data             │  │
-│  │ 4. Calculate Statistics       │  │
-│  │ 5. Generate AI Summary        │  │
-│  └───────────────────────────────┘  │
-└─────────────────────────────────────┘
-    ↓
-Results (Summary + Statistics + Map)
+   graph TD
+       A[User Input] --> B[LangGraph Workflow]
+       B --> C[Intent Extraction]
+       B --> D[Geocoding]
+       C --> E[Metric Selection]
+       D --> F[OSM Fetch]
+       E --> G[Statistics]
+       F --> G
+       G --> H[LLM Summary]
+       H --> I[Results]
 ```
 
 ## 🛠️ Tech Stack
