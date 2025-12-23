@@ -12,6 +12,7 @@ streamlit-folium>=0.15.0
 # LLM
 langchain>=0.1.0
 langchain-groq>=0.1.0
+langchain-openai>=0.1.0  # NEW: For OpenAI integration
 langchain-core>=0.1.0
 langgraph>=0.2.0
 

@@ -213,16 +213,9 @@ def geocode_location(state: LocalityState) -> LocalityState:
 
 def fetch_osm_data(state: LocalityState) -> LocalityState:
     """
-    Fetch OpenStreetMap POI data around the location.
+    Fetch and process OSM data using optimized approach.
     
-    Uses a single optimized query to fetch all POI categories, then classifies
-    and cleans the data for improved accuracy.
-    
-    Args:
-        state: Current workflow state
-        
-    Returns:
-        Updated state with OSM data populated
+    Fetches all features in one call, cleans/deduplicates, then classifies.
     """
     coordinates = state.get("coordinates")
     
@@ -236,186 +229,22 @@ def fetch_osm_data(state: LocalityState) -> LocalityState:
     radius = 2000  # 2km radius
     
     try:
-        # Single optimized query for all POI categories
-        all_pois = ox.features_from_point(
-            location_point,
-            tags={
-                # Essential amenities
-                'amenity': [
-                    'school', 'hospital', 'clinic', 'doctors', 'dentist',
-                    'restaurant', 'cafe', 'fast_food', 'food_court',
-                    'pharmacy', 'bank', 'atm', 'library', 'place_of_worship',
-                    'community_centre', 'kindergarten', 'childcare', 'tuition',
-                    'university', 'college', 'cinema'
-                ],
-                # Leisure & recreation
-                'leisure': [
-                    'park', 'garden', 'recreation_ground', 'playground',
-                    'fitness_centre', 'gym', 'sports_centre'
-                ],
-                # Entertainment & nightlife
-                'amenity': ['bar', 'pub', 'nightclub'],  # Will merge with above
-                # Transportation
-                'railway': 'station',
-                'highway': 'bus_stop',
-                # Shopping
-                'shop': True,  # All shop types
-                # Tourism
-                'tourism': ['hotel', 'attraction'],
-                # Buildings (for residential density)
-                'building': 'residential',
-                # Roads (for road density)
-                'highway': ['primary', 'secondary', 'tertiary', 'residential', 'cycleway']
-            },
-            dist=radius
-        )
+        from src.data.osm_processor import fetch_osm_features, deduplicate_pois
         
-        osm_data = {}
+        # Step 1: Fetch all features
+        all_features = fetch_osm_features(location_point, radius_m=radius)
         
-        # Classify and clean each category
-        if not all_pois.empty:
-            # Schools
-            if 'amenity' in all_pois.columns:
-                schools = all_pois[all_pois['amenity'] == 'school'].copy()
-                schools = clean_and_deduplicate_pois(schools, "schools")
-                osm_data["schools"] = {"count": len(schools), "data": []}
-            
-                # Hospitals & Clinics
-                hospitals = all_pois[all_pois['amenity'].isin(['hospital', 'clinic', 'doctors', 'dentist'])].copy()
-                hospitals = clean_and_deduplicate_pois(hospitals, "hospitals")
-                osm_data["hospitals"] = {"count": len(hospitals), "data": []}
-                
-                    # Restaurants (combined)
-                restaurants = all_pois[all_pois['amenity'].isin(['restaurant', 'cafe', 'fast_food', 'food_court'])].copy()
-                restaurants = clean_and_deduplicate_pois(restaurants, "restaurants")
-                osm_data["restaurants"] = {"count": len(restaurants), "data": []}
+        # Step 2: Clean and deduplicate
+        cleaned_features = deduplicate_pois(all_features, distance_m=200)
         
-                # Cafes (separate)
-                cafes = all_pois[all_pois['amenity'] == 'cafe'].copy()
-                cafes = clean_and_deduplicate_pois(cafes, "cafes")
-                osm_data["cafes"] = {"count": len(cafes), "data": []}
-                
-                # Fast food (separate)
-                fast_food = all_pois[all_pois['amenity'] == 'fast_food'].copy()
-                fast_food = clean_and_deduplicate_pois(fast_food, "fast_food")
-                osm_data["fast_food"] = {"count": len(fast_food), "data": []}
-                
-                # Banks & ATMs
-                banks = all_pois[all_pois['amenity'].isin(['bank', 'atm'])].copy()
-                banks = clean_and_deduplicate_pois(banks, "banks")
-                osm_data["banks"] = {"count": len(banks), "data": []}
-                
-                # Pharmacies
-                pharmacies = all_pois[all_pois['amenity'] == 'pharmacy'].copy()
-                pharmacies = clean_and_deduplicate_pois(pharmacies, "pharmacies")
-                osm_data["pharmacies"] = {"count": len(pharmacies), "data": []}
-                
-                # Gyms & Fitness
-                gyms = all_pois[all_pois['leisure'].isin(['fitness_centre', 'gym'])].copy()
-                gyms = clean_and_deduplicate_pois(gyms, "gyms")
-                osm_data["gyms"] = {"count": len(gyms), "data": []}
-                
-                # Libraries
-                libraries = all_pois[all_pois['amenity'] == 'library'].copy()
-                libraries = clean_and_deduplicate_pois(libraries, "libraries")
-                osm_data["libraries"] = {"count": len(libraries), "data": []}
-                
-                # Places of worship
-                worship = all_pois[all_pois['amenity'] == 'place_of_worship'].copy()
-                worship = clean_and_deduplicate_pois(worship, "worship")
-                osm_data["worship"] = {"count": len(worship), "data": []}
-                
-                # Nightlife
-                nightlife = all_pois[all_pois['amenity'].isin(['bar', 'pub', 'nightclub'])].copy()
-                nightlife = clean_and_deduplicate_pois(nightlife, "nightlife")
-                osm_data["nightlife"] = {"count": len(nightlife), "data": []}
-                
-                # Cinemas
-                cinemas = all_pois[all_pois['amenity'] == 'cinema'].copy()
-                cinemas = clean_and_deduplicate_pois(cinemas, "cinemas")
-                osm_data["cinemas"] = {"count": len(cinemas), "data": []}
-                
-                # Universities & Colleges
-                universities = all_pois[all_pois['amenity'].isin(['university', 'college'])].copy()
-                universities = clean_and_deduplicate_pois(universities, "universities")
-                osm_data["universities"] = {"count": len(universities), "data": []}
-                
-                # Kindergartens
-                kindergartens = all_pois[all_pois['amenity'] == 'kindergarten'].copy()
-                kindergartens = clean_and_deduplicate_pois(kindergartens, "kindergartens")
-                osm_data["kindergartens"] = {"count": len(kindergartens), "data": []}
-                
-                # Childcare
-                childcare = all_pois[all_pois['amenity'] == 'childcare'].copy()
-                childcare = clean_and_deduplicate_pois(childcare, "childcare")
-                osm_data["childcare"] = {"count": len(childcare), "data": []}
-                
-                # Tuition centres
-                tuition = all_pois[all_pois['amenity'] == 'tuition'].copy()
-                tuition = clean_and_deduplicate_pois(tuition, "tuition")
-                osm_data["tuition"] = {"count": len(tuition), "data": []}
-                
-                # Community centres
-                community = all_pois[all_pois['amenity'] == 'community_centre'].copy()
-                community = clean_and_deduplicate_pois(community, "community")
-                osm_data["community"] = {"count": len(community), "data": []}
-            
-            # Leisure categories
-            if 'leisure' in all_pois.columns:
-                # Parks
-                parks = all_pois[all_pois['leisure'].isin(['park', 'garden', 'recreation_ground'])].copy()
-                parks = clean_and_deduplicate_pois(parks, "parks")
-                estimated_area = len(parks) * 0.15  # Rough estimate
-                osm_data["parks"] = {"count": len(parks), "area_km2": round(estimated_area, 2), "data": []}
-        
-                # Playgrounds
-                playgrounds = all_pois[all_pois['leisure'] == 'playground'].copy()
-                playgrounds = clean_and_deduplicate_pois(playgrounds, "playgrounds")
-                osm_data["playgrounds"] = {"count": len(playgrounds), "data": []}
-                
-                # Sports facilities
-                sports = all_pois[all_pois['leisure'] == 'sports_centre'].copy()
-                sports = clean_and_deduplicate_pois(sports, "sports")
-                osm_data["sports"] = {"count": len(sports), "data": []}
-            
-            # Transportation
-            if 'railway' in all_pois.columns:
-                metro = all_pois[all_pois['railway'] == 'station'].copy()
-            if 'station' in all_pois.columns:
-                metro = metro[metro['station'].isin(['subway', 'metro'])]
-                metro = clean_and_deduplicate_pois(metro, "metro")
-            osm_data["metro_stations"] = {"count": len(metro), "data": []}
-        
-            if 'highway' in all_pois.columns:
-                bus_stops = all_pois[all_pois['highway'] == 'bus_stop'].copy()
-                bus_stops = clean_and_deduplicate_pois(bus_stops, "bus_stops")
-            osm_data["bus_stops"] = {"count": len(bus_stops), "data": []}
-        
-            # Shopping
-            if 'shop' in all_pois.columns:
-                shops = all_pois[all_pois['shop'].notna()].copy()
-                shops = clean_and_deduplicate_pois(shops, "shops")
-                osm_data["shops"] = {"count": len(shops), "data": []}
-            
-            # Tourism
-            if 'tourism' in all_pois.columns:
-                hotels = all_pois[all_pois['tourism'] == 'hotel'].copy()
-                hotels = clean_and_deduplicate_pois(hotels, "hotels")
-                osm_data["hotels"] = {"count": len(hotels), "data": []}
-            
-            # Buildings (for residential density)
-            if 'building' in all_pois.columns:
-                residential = all_pois[all_pois['building'] == 'residential'].copy()
-                residential = clean_and_deduplicate_pois(residential, "residential")
-                osm_data["residential_buildings"] = {"count": len(residential), "data": []}
-            
-            # Roads (for road density) - need separate query
-            # This is expensive, so we'll calculate it separately if needed
+        # Step 3: Classify into categories
+        osm_data = classify_pois_to_categories(cleaned_features)
         
         state["osm_data"] = osm_data
-        state["next_action"] = "select_metrics"  # Changed from calculate_statistics
+        state["next_action"] = "select_metrics"
         state["processing_steps"].append(
-            f"fetch_osm_data: SUCCESS - Fetched {len(osm_data)} POI categories"
+            f"fetch_osm_data: SUCCESS - Fetched {len(all_features)} features, "
+            f"cleaned to {len(cleaned_features)}, classified into {len(osm_data)} categories"
         )
         
     except Exception as e:
@@ -424,6 +253,170 @@ def fetch_osm_data(state: LocalityState) -> LocalityState:
         state["processing_steps"].append(f"fetch_osm_data: ERROR - {str(e)}")
     
     return state
+
+
+def classify_pois_to_categories(gdf):
+    """
+    Classify cleaned POIs into internal categories based on poi_type.
+    
+    Maps poi_type values (e.g., "restaurant", "park") to categories (e.g., "restaurants", "parks").
+    This is where you do further processing with poi_type column.
+    
+    Args:
+        gdf: GeoDataFrame with 'poi_type' column (from deduplicate_pois)
+        
+    Returns:
+        Dictionary with category counts and metadata (matches expected osm_data structure)
+    """
+    osm_data = {}
+    
+    if gdf.empty or 'poi_type' not in gdf.columns:
+        return osm_data
+    
+    # Classification mapping based on poi_type values
+    # Note: poi_type is just the value (e.g., "restaurant", not "amenity_restaurant")
+    
+    # Schools
+    schools = gdf[gdf['poi_type'] == 'school']
+    if not schools.empty:
+        osm_data["schools"] = {"count": len(schools), "data": []}
+    
+    # Hospitals & Clinics
+    hospitals = gdf[gdf['poi_type'].isin(['hospital', 'clinic', 'doctors', 'dentist'])]
+    if not hospitals.empty:
+        osm_data["hospitals"] = {"count": len(hospitals), "data": []}
+    
+    # Restaurants (combined)
+    restaurants = gdf[gdf['poi_type'].isin(['restaurant', 'cafe', 'fast_food', 'food_court'])]
+    if not restaurants.empty:
+        osm_data["restaurants"] = {"count": len(restaurants), "data": []}
+    
+    # Cafes (separate)
+    cafes = gdf[gdf['poi_type'] == 'cafe']
+    if not cafes.empty:
+        osm_data["cafes"] = {"count": len(cafes), "data": []}
+    
+    # Fast food (separate)
+    fast_food = gdf[gdf['poi_type'] == 'fast_food']
+    if not fast_food.empty:
+        osm_data["fast_food"] = {"count": len(fast_food), "data": []}
+    
+    # Banks & ATMs
+    banks = gdf[gdf['poi_type'].isin(['bank', 'atm'])]
+    if not banks.empty:
+        osm_data["banks"] = {"count": len(banks), "data": []}
+    
+    # Pharmacies
+    pharmacies = gdf[gdf['poi_type'] == 'pharmacy']
+    if not pharmacies.empty:
+        osm_data["pharmacies"] = {"count": len(pharmacies), "data": []}
+    
+    # Gyms & Fitness (check both amenity and leisure values)
+    gyms = gdf[gdf['poi_type'].isin(['gym', 'fitness_centre'])]
+    if not gyms.empty:
+        osm_data["gyms"] = {"count": len(gyms), "data": []}
+    
+    # Libraries
+    libraries = gdf[gdf['poi_type'] == 'library']
+    if not libraries.empty:
+        osm_data["libraries"] = {"count": len(libraries), "data": []}
+    
+    # Places of worship
+    worship = gdf[gdf['poi_type'] == 'place_of_worship']
+    if not worship.empty:
+        osm_data["worship"] = {"count": len(worship), "data": []}
+    
+    # Nightlife
+    nightlife = gdf[gdf['poi_type'].isin(['bar', 'pub', 'nightclub'])]
+    if not nightlife.empty:
+        osm_data["nightlife"] = {"count": len(nightlife), "data": []}
+    
+    # Cinemas
+    cinemas = gdf[gdf['poi_type'] == 'cinema']
+    if not cinemas.empty:
+        osm_data["cinemas"] = {"count": len(cinemas), "data": []}
+    
+    # Universities & Colleges
+    universities = gdf[gdf['poi_type'].isin(['university', 'college'])]
+    if not universities.empty:
+        osm_data["universities"] = {"count": len(universities), "data": []}
+    
+    # Kindergartens
+    kindergartens = gdf[gdf['poi_type'] == 'kindergarten']
+    if not kindergartens.empty:
+        osm_data["kindergartens"] = {"count": len(kindergartens), "data": []}
+    
+    # Childcare
+    childcare = gdf[gdf['poi_type'] == 'childcare']
+    if not childcare.empty:
+        osm_data["childcare"] = {"count": len(childcare), "data": []}
+    
+    # Tuition centres
+    tuition = gdf[gdf['poi_type'] == 'tuition']
+    if not tuition.empty:
+        osm_data["tuition"] = {"count": len(tuition), "data": []}
+    
+    # Community centres
+    community = gdf[gdf['poi_type'] == 'community_centre']
+    if not community.empty:
+        osm_data["community"] = {"count": len(community), "data": []}
+    
+    # Parks (calculate area for polygons)
+    parks = gdf[gdf['poi_type'].isin(['park', 'garden', 'recreation_ground'])]
+    if not parks.empty:
+        # Calculate area for park polygons
+        park_polygons = parks[parks.geometry.type.isin(['Polygon', 'MultiPolygon'])]
+        if not park_polygons.empty:
+            area_m2 = park_polygons.geometry.area.sum()
+            area_km2 = area_m2 / 1e6  # Convert m² to km²
+        else:
+            # Estimate if no polygons (only points)
+            area_km2 = len(parks) * 0.15  # Rough estimate
+        
+        osm_data["parks"] = {
+            "count": len(parks),
+            "area_km2": round(area_km2, 2),
+            "data": []
+        }
+    
+    # Playgrounds
+    playgrounds = gdf[gdf['poi_type'] == 'playground']
+    if not playgrounds.empty:
+        osm_data["playgrounds"] = {"count": len(playgrounds), "data": []}
+    
+    # Sports facilities
+    sports = gdf[gdf['poi_type'] == 'sports_centre']
+    if not sports.empty:
+        osm_data["sports"] = {"count": len(sports), "data": []}
+    
+    # Metro stations (check all railway types)
+    metro = gdf[gdf['poi_type'].isin(['station', 'subway', 'subway_entrance', 'platform'])]
+    if not metro.empty:
+        osm_data["metro_stations"] = {"count": len(metro), "data": []}
+    
+    # Bus stops
+    bus_stops = gdf[gdf['poi_type'] == 'bus_stop']
+    if not bus_stops.empty:
+        osm_data["bus_stops"] = {"count": len(bus_stops), "data": []}
+    
+    # Shops - check original shop column (since poi_type is just the value)
+    if 'shop' in gdf.columns:
+        shops = gdf[gdf['shop'].notna()]
+        if not shops.empty:
+            osm_data["shops"] = {"count": len(shops), "data": []}
+    
+    # Hotels
+    hotels = gdf[gdf['poi_type'].isin(['hotel', 'hostel', 'guest_house'])]
+    if not hotels.empty:
+        osm_data["hotels"] = {"count": len(hotels), "data": []}
+    
+    # Residential buildings (check original building column)
+    if 'building' in gdf.columns:
+        residential = gdf[gdf['building'] == 'residential']
+        if not residential.empty:
+            osm_data["residential_buildings"] = {"count": len(residential), "data": []}
+    
+    return osm_data
 
 
 def extract_intent_and_select_metrics(state: LocalityState) -> LocalityState:
