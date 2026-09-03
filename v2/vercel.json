@@ -6,5 +6,11 @@
       "maxDuration": 60,
       "excludeFiles": "{node_modules/**,.next/**,app/**,components/**,public/**,.venv-api/**}"
     }
-  }
+  },
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/index"
+    }
+  ]
 }
