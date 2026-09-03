@@ -1,0 +1,8 @@
+.env
+.env*.local
+.venv-api/
+__pycache__/
+node_modules/
+.next/
+.vercel/
+*.tsbuildinfo
