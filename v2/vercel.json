@@ -3,7 +3,7 @@
   "functions": {
     "api/index.py": {
       "memory": 1024,
-      "maxDuration": 60,
+      "maxDuration": 300,
       "excludeFiles": "{node_modules/**,.next/**,app/**,components/**,public/**,.venv-api/**}"
     }
   },

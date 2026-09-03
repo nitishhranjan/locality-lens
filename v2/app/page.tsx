@@ -140,6 +140,10 @@ export default function Page() {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
+      // The stream must end on a terminal event. If it just stops - the
+      // serverless function hit its duration cap, the connection dropped -
+      // the UI would otherwise sit on a spinner forever with no explanation.
+      let terminated = false;
 
       for (;;) {
         const { done, value } = await reader.read();
@@ -151,11 +155,26 @@ export default function Page() {
         for (const line of lines) {
           if (!line.trim()) continue;
           try {
-            apply(JSON.parse(line) as StreamEvent);
+            const event = JSON.parse(line) as StreamEvent;
+            if (event.type === "done" || event.type === "error" || event.type === "rephrase") {
+              terminated = true;
+            }
+            apply(event);
           } catch {
             /* ignore a malformed line rather than killing the stream */
           }
         }
+      }
+
+      if (!terminated) {
+        setError(
+          "The analysis stopped before finishing — the server took too long. " +
+            "Results are cached briefly, so trying again is usually much faster."
+        );
+        // Do not leave a stage claiming to still be working.
+        setStages((prev) =>
+          prev.map((s) => (s.status === "running" ? { ...s, status: "error", detail: "Interrupted" } : s))
+        );
       }
     } catch (err) {
       if ((err as Error).name !== "AbortError") {
