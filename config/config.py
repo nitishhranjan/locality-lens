@@ -28,6 +28,12 @@ if not GROQ_API_KEY:
 else:
     print(f"✅ GROQ_API_KEY loaded (length: {len(GROQ_API_KEY)})")
 
+# Model Settings
+# Groq retires models periodically - override via .env if these are decommissioned.
+# Check the current list at https://console.groq.com/docs/models
+INTENT_MODEL = os.getenv("INTENT_MODEL", "openai/gpt-oss-20b")
+SUMMARY_MODEL = os.getenv("SUMMARY_MODEL", "openai/gpt-oss-120b")
+
 # App Settings
 APP_NAME = "Locality Lens"
 DEFAULT_LOCATION = "Indiranagar, Bangalore"
