@@ -367,7 +367,9 @@ def classify_pois_to_categories(gdf):
         # Calculate area for park polygons
         park_polygons = parks[parks.geometry.type.isin(['Polygon', 'MultiPolygon'])]
         if not park_polygons.empty:
-            area_m2 = park_polygons.geometry.area.sum()
+            # Reproject to UTM first - .area on EPSG:4326 returns degrees², not m²
+            park_polygons_utm = park_polygons.to_crs(park_polygons.estimate_utm_crs())
+            area_m2 = park_polygons_utm.geometry.area.sum()
             area_km2 = area_m2 / 1e6  # Convert m² to km²
         else:
             # Estimate if no polygons (only points)

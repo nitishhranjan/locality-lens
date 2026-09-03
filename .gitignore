@@ -32,8 +32,12 @@ ENV/
 
 # OSM Cache
 data/cache/
+cache/
 *.osm
 *.pbf
+
+# Local tooling (machine-specific paths)
+.claude/
 
 # Logs
 *.log

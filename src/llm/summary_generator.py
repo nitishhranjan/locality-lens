@@ -1,15 +1,15 @@
 """
 LLM integration for generating locality summaries.
 """
-from langchain_openai import ChatOpenAI
-from config.config import OPENAI_API_KEY
+from langchain_groq import ChatGroq
+from config.config import GROQ_API_KEY, SUMMARY_MODEL
 from .prompts import get_summary_prompt
 
 def get_llm():
     """Get LLM instance."""
-    return ChatOpenAI(
-        api_key=OPENAI_API_KEY,
-        model_name="gpt-4o",
+    return ChatGroq(
+        api_key=GROQ_API_KEY,
+        model_name=SUMMARY_MODEL,
         temperature=0.6,
         max_tokens=1024
     )

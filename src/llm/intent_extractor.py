@@ -5,7 +5,7 @@ import json
 import re
 from typing import Dict, Any
 from langchain_groq import ChatGroq
-from config.config import GROQ_API_KEY
+from config.config import GROQ_API_KEY, INTENT_MODEL
 from src.analysis.metrics_catalog import (
     get_metrics_for_llm_selection,
     validate_metrics,
@@ -16,7 +16,7 @@ def get_llm():
     """Get LLM instance."""
     return ChatGroq(
         api_key=GROQ_API_KEY,
-        model_name="llama-3.1-8b-instant",
+        model_name=INTENT_MODEL,
         temperature=0.6,
         max_tokens=1024
     )
