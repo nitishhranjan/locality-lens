@@ -72,46 +72,53 @@ export default function MapPanel({ location, pois }: { location: LocationInfo | 
   /**
    * Add our source and layers, then write any parked data.
    *
-   * Driven by `styledata` rather than the one-shot `load` event: under React
-   * StrictMode the first map is constructed and torn down before it ever
-   * finishes loading, so a handler bound to `load` can be dropped entirely
-   * and the layers never get added at all. `styledata` fires on every style
-   * update, and this whole body is idempotent, so repeat calls are harmless.
+   * Called from `styledata`, `load` and `idle`, because no single event
+   * fires reliably after the style is ready on every load path. The body is
+   * idempotent, so being called repeatedly costs nothing.
    */
   const sync = useCallback(() => {
     const m = map.current;
     if (!m) return;
 
-    // Gate only the *creation* of layers on the style being ready. Do not
-    // gate the data write on it: this style keeps `isStyleLoaded()` false
-    // indefinitely because of an unresolved sprite image, so guarding
-    // setData behind it silently drops every update forever.
-    if (!m.getSource("pois")) {
-      if (!m.isStyleLoaded()) return; // a later `styledata` will retry
-      m.addSource("pois", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-      m.addLayer({
-        id: "poi-glow",
-        type: "circle",
-        source: "pois",
-        paint: {
-          "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 4, 16, 11],
-          "circle-color": ["get", "color"],
-          "circle-opacity": 0.14,
-          "circle-blur": 1,
-        },
-      });
-      m.addLayer({
-        id: "poi-dot",
-        type: "circle",
-        source: "pois",
-        paint: {
-          "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 1.8, 16, 4.5],
-          "circle-color": ["get", "color"],
-          "circle-opacity": 0.95,
-          "circle-stroke-width": 0.4,
-          "circle-stroke-color": "rgba(0,0,0,0.55)",
-        },
-      });
+    // Never gate on `isStyleLoaded()`. This style leaves it false
+    // indefinitely (an unresolved sprite image), so any branch guarded by it
+    // never runs - which is exactly why the deployed map drew a basemap and
+    // nothing else. Instead just attempt the calls: if the style genuinely
+    // is not ready they throw, and a later event retries. Each step is
+    // checked separately so a partial failure still heals.
+    try {
+      if (!m.getSource("pois")) {
+        m.addSource("pois", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+      }
+      if (!m.getLayer("poi-glow")) {
+        m.addLayer({
+          id: "poi-glow",
+          type: "circle",
+          source: "pois",
+          paint: {
+            "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 4, 16, 11],
+            "circle-color": ["get", "color"],
+            "circle-opacity": 0.14,
+            "circle-blur": 1,
+          },
+        });
+      }
+      if (!m.getLayer("poi-dot")) {
+        m.addLayer({
+          id: "poi-dot",
+          type: "circle",
+          source: "pois",
+          paint: {
+            "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 1.8, 16, 4.5],
+            "circle-color": ["get", "color"],
+            "circle-opacity": 0.95,
+            "circle-stroke-width": 0.4,
+            "circle-stroke-color": "rgba(0,0,0,0.55)",
+          },
+        });
+      }
+    } catch {
+      return; // style not ready yet - a later styledata/load/idle retries
     }
 
     const source = m.getSource("pois") as maplibregl.GeoJSONSource | undefined;

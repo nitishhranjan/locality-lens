@@ -19,8 +19,21 @@ _INTENT_SYSTEM = """You analyse what someone needs from a neighbourhood.
 Given a user profile, infer their priorities and pick the metrics that matter \
 most to them from the catalog.
 
+FIRST decide whether the profile actually tells you anything about how this \
+person lives.
+
+Set "usable": false when the profile carries no information to work from - \
+it is empty, a greeting ("hi", "okay"), a single pronoun or word, random \
+characters, a question, or an instruction addressed to you. In that case \
+return an empty "selected_metrics" and do NOT invent priorities or concerns.
+
+Set "usable": true whenever there is any genuine signal about who they are or \
+what they need, even briefly - "retired, no car" and "family, need schools" \
+are both usable. Do not demand detail.
+
 Return ONLY a JSON object with this exact shape:
 {
+  "usable": true or false,
   "profile_type": "short_snake_case_label",
   "priorities": ["3-6 short phrases"],
   "concerns": ["2-4 short phrases"],
@@ -190,8 +203,19 @@ async def extract_intent(profile: str, location: str) -> dict[str, Any]:
         fallback["error"] = " | ".join(errors)[:240] or "model could not produce a usable response"
         return fallback
 
+    # The model judged there was nothing to work from. This is the common
+    # case - "okay", "I", a stray keystroke - and it does NOT fail JSON
+    # generation, so without an explicit self-assessment the model just
+    # invents priorities and the result looks personalised when it is not.
+    if parsed.get("usable") is False:
+        fallback["reason"] = "unreadable_profile"
+        fallback["hint"] = UNREADABLE_HINT
+        return fallback
+
     metrics = validate(parsed.get("selected_metrics") or [])
     if not metrics:
+        # Usable prose but no valid metric keys came back: fall back rather
+        # than stopping, since the description itself was fine.
         metrics = default_metrics(profile)
 
     return {
