@@ -6,6 +6,10 @@ FastAPI backend, streaming a live agent trace as it works.
 The v1 Streamlit app lives in the repository root and still runs. This is a
 parallel version, not a replacement.
 
+**Live:** [locality-lens-ten.vercel.app](https://locality-lens-ten.vercel.app/)
+
+![Locality Lens analysing Indiranagar, Bangalore](docs/screenshots/01-overview.png)
+
 ---
 
 ## Why a rewrite
@@ -62,6 +66,36 @@ graph structure and the streaming UI coexist rather than trading off.
   fallback in the trace *and* says why.
 
 ---
+
+## Screenshots
+
+The six pipeline stages report themselves as they run, with per-stage timings —
+the trace is the real execution, not a decoration.
+
+### The analysis
+
+Metrics are chosen for the profile, and the write-up cites the actual figures.
+The closing paragraph is required to name a genuine trade-off, so the output
+argues rather than just flatters the neighbourhood.
+
+![Understood intent, selected metrics, and the written analysis](docs/screenshots/02-analysis.png)
+
+### Filtering the map
+
+Every category present is a chip. The first click isolates one type — the usual
+intent is "just show me restaurants" — and further clicks add or remove. Here
+400 restaurants of 2,644 mapped places.
+
+![Map filtered to restaurants only](docs/screenshots/03-map-filter.png)
+
+### Describing yourself
+
+Free text is the richer input. This run was given *"I use a wheelchair, don't
+drive, and need pharmacies and a doctor close by"* — the model inferred
+"no driving" into transit and walkability metrics without being told, and the
+verdict addresses curb ramps and sidewalk width.
+
+![Free-text profile producing accessibility-focused metrics](docs/screenshots/04-free-text.png)
 
 ## Running it
 
