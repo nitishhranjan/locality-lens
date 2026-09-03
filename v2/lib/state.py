@@ -42,3 +42,8 @@ class LocalityState(TypedDict, total=False):
     # Set once the failure has been reported to the client. Both branches can
     # reach handle_error, and the client should see one error, not two.
     reported: Annotated[bool, operator.or_]
+
+    # The description could not be read well enough to select metrics. The
+    # run stops here and asks for a rewording rather than returning a generic
+    # analysis that looks personalised but is not.
+    needs_rephrase: Annotated[bool, operator.or_]

@@ -48,6 +48,7 @@ export type StreamEvent =
   | { type: "stats"; data: Record<string, Metric> }
   | { type: "token"; text: string }
   | { type: "notice"; message: string }
+  | { type: "rephrase"; message: string; examples: string[] }
   | { type: "error"; message: string }
   | { type: "done"; elapsed: number };
 

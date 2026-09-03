@@ -66,6 +66,33 @@ def _client(cfg: dict) -> AsyncOpenAI:
     return _CLIENTS[cfg["name"]]
 
 
+UNREADABLE_HINT = (
+    "Could not read that description well enough to pick metrics for you. "
+    "Try a sentence or two about how you live - who is moving, what you need "
+    "nearby, what you want to avoid."
+)
+
+UNREADABLE_EXAMPLES = [
+    "Family of four, need good schools and parks within walking distance",
+    "I work from home and cycle everywhere; cafes and quiet streets matter",
+    "Retired, no car, want pharmacies and a doctor close by",
+]
+
+# Providers reject a malformed structured response with a 400 rather than
+# returning the text, so the failure has to be recognised from the message.
+_JSON_FAILURE_MARKERS = (
+    "failed to generate json",
+    "json_validate_failed",
+    "failed_generation",
+    "response_format",
+)
+
+
+def _is_json_failure(message: str) -> bool:
+    lowered = message.lower()
+    return any(marker in lowered for marker in _JSON_FAILURE_MARKERS)
+
+
 def _provider_chain() -> list[dict]:
     """The provider to try, then the fallback if it is a different, usable one.
 
@@ -112,27 +139,55 @@ async def extract_intent(profile: str, location: str) -> dict[str, Any]:
     if not profile:
         return fallback
 
-    parsed, errors, used = None, [], None
+    system = _INTENT_SYSTEM.replace("{catalog}", catalog_for_prompt())
+    user = f"Profile: {profile}\nLocation of interest: {location}"
+
+    parsed, errors, used, unreadable = None, [], None, False
     for cfg in _provider_chain():
-        try:
-            response = await _client(cfg).chat.completions.create(
-                model=cfg["intent_model"],
-                temperature=0.4,
-                max_tokens=700,
-                response_format={"type": "json_object"},
-                messages=[
-                    {"role": "system", "content": _INTENT_SYSTEM.replace("{catalog}", catalog_for_prompt())},
-                    {"role": "user", "content": f"Profile: {profile}\nLocation of interest: {location}"},
-                ],
-            )
-            parsed = json.loads(response.choices[0].message.content or "{}")
-            used = cfg["name"]
+        # Two passes: a terse or unusual description can make the model emit
+        # something that is not valid JSON, which the provider rejects with a
+        # 400 rather than returning text. Retrying once with an explicit
+        # reminder recovers most of those before anyone sees an error.
+        for attempt in range(2):
+            messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
+            if attempt:
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": "The previous attempt did not return valid JSON. Respond with "
+                        "the JSON object only - no prose, no code fences. If the profile is "
+                        "vague, infer reasonable priorities rather than asking for more detail.",
+                    }
+                )
+            try:
+                response = await _client(cfg).chat.completions.create(
+                    model=cfg["intent_model"],
+                    temperature=0.4 if not attempt else 0.1,
+                    max_tokens=700,
+                    response_format={"type": "json_object"},
+                    messages=messages,
+                )
+                parsed = json.loads(response.choices[0].message.content or "{}")
+                used = cfg["name"]
+                break
+            except Exception as exc:
+                text = str(exc)
+                if _is_json_failure(text):
+                    unreadable = True
+                    continue  # retry is worth a shot
+                errors.append(f"{cfg['name']}: {text[:120]}")
+                break  # a real provider fault - move to the next provider
+        if parsed is not None:
             break
-        except Exception as exc:
-            errors.append(f"{cfg['name']}: {str(exc)[:120]}")
 
     if parsed is None:
-        fallback["error"] = " | ".join(errors)[:240]
+        fallback["reason"] = "unreadable_profile" if unreadable else "provider_error"
+        fallback["hint"] = (
+            UNREADABLE_HINT
+            if unreadable
+            else "The language model could not be reached, so a standard metric set was used."
+        )
+        fallback["error"] = " | ".join(errors)[:240] or "model could not produce a usable response"
         return fallback
 
     metrics = validate(parsed.get("selected_metrics") or [])

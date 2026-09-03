@@ -44,6 +44,8 @@ export default function Page() {
   const [summary, setSummary] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [rephrase, setRephrase] = useState<{ message: string; examples: string[] } | null>(null);
+  const customRef = useRef<HTMLTextAreaElement>(null);
   const [elapsed, setElapsed] = useState<number | null>(null);
   const [provider, setProvider] = useState<{ provider: string; ok: boolean } | null>(null);
 
@@ -85,6 +87,11 @@ export default function Page() {
       case "notice":
         setNotice(event.message);
         break;
+      case "rephrase":
+        setRephrase({ message: event.message, examples: event.examples });
+        // Put the cursor back where the fix has to happen.
+        setTimeout(() => customRef.current?.focus(), 60);
+        break;
       case "error":
         setError(event.message);
         break;
@@ -114,6 +121,7 @@ export default function Page() {
     setSummary("");
     setNotice(null);
     setError(null);
+    setRephrase(null);
     setElapsed(null);
 
     try {
@@ -248,6 +256,7 @@ export default function Page() {
         {custom && (
           <div className="custom-wrap">
             <textarea
+              ref={customRef}
               value={customText}
               onChange={(e) => setCustomText(e.target.value)}
               onKeyDown={(e) => {
@@ -264,6 +273,46 @@ export default function Page() {
           </div>
         )}
       </div>
+
+      {rephrase && (
+        <div className="rephrase" role="status">
+          <div className="rephrase-head">
+            <span className="rephrase-icon" aria-hidden>
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+                <path
+                  d="M11.5 2.5a1.6 1.6 0 0 1 2.3 2.3L6 12.6l-3 .7.7-3 7.8-7.8Z"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </span>
+            <div>
+              <strong>Could you put that another way?</strong>
+              <p>{rephrase.message}</p>
+            </div>
+          </div>
+
+          <div className="rephrase-examples">
+            {rephrase.examples.map((example) => (
+              <button
+                key={example}
+                className="chip"
+                onClick={() => {
+                  // Load the example straight into the box so it can be
+                  // edited rather than retyped from scratch.
+                  setCustom(true);
+                  setCustomText(example);
+                  setRephrase(null);
+                  setTimeout(() => customRef.current?.focus(), 60);
+                }}
+              >
+                {example}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="notice err" style={{ marginTop: 18 }}>

@@ -77,6 +77,21 @@ async def extract_intent(state: LocalityState, config: RunnableConfig) -> dict[s
     writer = get_stream_writer()
 
     intent = await llm.extract_intent(state.get("user_profile") or "", state["user_input"])
+
+    # An unreadable description stops the run. Continuing would produce a
+    # generic analysis presented as a personalised one, which is worse than
+    # saying plainly that the description did not land.
+    if intent.get("reason") == "unreadable_profile":
+        _stage(config, "intent", "error", "Could not read the description")
+        writer(
+            {
+                "type": "rephrase",
+                "message": llm.UNREADABLE_HINT,
+                "examples": llm.UNREADABLE_EXAMPLES,
+            }
+        )
+        return {"needs_rephrase": True}
+
     writer({"type": "intent", "data": intent})
 
     detail = f"{len(intent['selected_metrics'])} metrics selected"
@@ -85,8 +100,14 @@ async def extract_intent(state: LocalityState, config: RunnableConfig) -> dict[s
         detail += " (fallback)"
         # v1 hid LLM failures behind default metrics with no signal, so a dead
         # model looked like a working app. Always say when we fell back, and why.
+        writer(
+            {
+                "type": "notice",
+                "message": intent.get("hint")
+                or "Metric selection fell back to a standard set for this profile.",
+            }
+        )
         if intent.get("error"):
-            writer({"type": "notice", "message": f"Metric selection fell back to defaults: {intent['error']}"})
             warnings.append(intent["error"])
 
     _stage(config, "intent", "done", detail)
@@ -133,7 +154,7 @@ async def fetch_osm(state: LocalityState, config: RunnableConfig) -> dict[str, A
     still gets scheduled - with no coordinates to work from. Bail out and let
     the router hand off to handle_error rather than dereferencing None.
     """
-    if state.get("errors") or not state.get("coordinates"):
+    if state.get("errors") or state.get("needs_rephrase") or not state.get("coordinates"):
         return {}
 
     _stage(config, "fetch", "running")

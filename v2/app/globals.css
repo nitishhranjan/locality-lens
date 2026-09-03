@@ -730,6 +730,68 @@ body::before {
   color: #fda4af;
 }
 
+/* -------------------------------------------------- rephrase prompt */
+/* Deliberately not styled as an error: nothing broke, the description just
+   did not carry enough to work from. */
+.rephrase {
+  margin-top: 18px;
+  padding: 15px 17px;
+  border: 1px solid rgba(91, 108, 255, 0.35);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, rgba(91, 108, 255, 0.09), rgba(91, 108, 255, 0.03));
+  animation: rise 0.3s ease;
+}
+
+.rephrase-head {
+  display: flex;
+  gap: 11px;
+  align-items: flex-start;
+}
+
+.rephrase-icon {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border-radius: 7px;
+  background: var(--accent-dim);
+  color: var(--accent-hi);
+  margin-top: 1px;
+}
+
+.rephrase-head strong {
+  font-size: 13.5px;
+  font-weight: 600;
+  display: block;
+}
+
+.rephrase-head p {
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-dim);
+}
+
+.rephrase-examples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+  padding-left: 35px;
+}
+
+.rephrase-examples .chip {
+  font-size: 12px;
+  text-align: left;
+  white-space: normal;
+  max-width: 100%;
+}
+
+@media (max-width: 560px) {
+  .rephrase-examples { padding-left: 0; }
+}
+
 .footer {
   margin-top: 40px;
   padding-top: 18px;

@@ -64,25 +64,33 @@ def build_graph() -> StateGraph:
         "validate", route_after_validate, ["handle_error", "intent", "geocode"]
     )
 
-    # Intent has no failure exit of its own: llm.extract_intent already
-    # degrades to a default metric set rather than raising, so the run
-    # continues with a visible "(fallback)" marker in the trace.
-    graph.add_edge("intent", "fetch")
+    # Intent has no error exit: a provider fault degrades to a default metric
+    # set rather than raising, and the run continues with a visible
+    # "(fallback)" marker. The one exception is a description the model could
+    # not read at all, which ends the run so the user can reword it instead of
+    # receiving a generic analysis dressed up as a personalised one.
+    graph.add_conditional_edges(
+        "intent",
+        lambda s: "stop" if s.get("needs_rephrase") else "ok",
+        {"stop": END, "ok": "fetch"},
+    )
+
+    # The geocode branch runs independently of intent, so every downstream
+    # hop has to honour a stop raised by the other branch - otherwise it
+    # marches on into nodes whose inputs were never produced.
+    def route(state: LocalityState) -> str:
+        if state.get("needs_rephrase"):
+            return "stop"
+        return "error" if state.get("errors") else "ok"
 
     graph.add_conditional_edges(
-        "geocode",
-        lambda s: "error" if s.get("errors") else "ok",
-        {"error": "handle_error", "ok": "fetch"},
+        "geocode", route, {"stop": END, "error": "handle_error", "ok": "fetch"}
     )
     graph.add_conditional_edges(
-        "fetch",
-        lambda s: "error" if s.get("errors") else "ok",
-        {"error": "handle_error", "ok": "calculate"},
+        "fetch", route, {"stop": END, "error": "handle_error", "ok": "calculate"}
     )
     graph.add_conditional_edges(
-        "calculate",
-        lambda s: "error" if s.get("errors") else "ok",
-        {"error": "handle_error", "ok": "summarize"},
+        "calculate", route, {"stop": END, "error": "handle_error", "ok": "summarize"}
     )
 
     graph.add_edge("summarize", END)
@@ -114,14 +122,16 @@ async def analyse(user_input: str, profile: str) -> AsyncIterator[dict[str, Any]
             "recursion_limit": 25,
         }
 
-        errored = False
+        stopped = False
         # stream_mode="custom" surfaces exactly what the nodes hand to their
         # stream writer - our own event dicts, not LangGraph's internal
         # state deltas.
         async for event in _COMPILED.astream(initial, config=config, stream_mode="custom"):
-            if event.get("type") == "error":
-                errored = True
+            if event.get("type") in ("error", "rephrase"):
+                stopped = True
             yield event
 
-        if not errored:
+        # "done" means a complete analysis. A run that ended early already
+        # said why, and the UI should not show it as finished.
+        if not stopped:
             yield {"type": "done", "elapsed": round(time.perf_counter() - started, 2)}
