@@ -14,6 +14,8 @@ export default function MapPanel({ location, pois }: { location: LocationInfo | 
   const container = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
   const pending = useRef<{ data: GeoJSON.FeatureCollection; location: LocationInfo | null } | null>(null);
+  // Last payload actually written, so repeated sync calls are no-ops.
+  const applied = useRef<GeoJSON.FeatureCollection | null>(null);
 
   // `null` means no filter - show everything. A Set means show only those.
   const [shown, setShown] = useState<Set<string> | null>(null);
@@ -116,7 +118,12 @@ export default function MapPanel({ location, pois }: { location: LocationInfo | 
     const next = pending.current;
     if (!source || !next) return;
 
-    source.setData(next.data);
+    // Skip if this exact payload is already on the map. Without this guard,
+    // running sync on `idle` would loop: setData -> render -> idle -> setData.
+    if (next.data !== applied.current) {
+      source.setData(next.data);
+      applied.current = next.data;
+    }
     if (next.location) {
       m.easeTo({ center: [next.location.lon, next.location.lat], zoom: 13.4, duration: 900 });
       next.location = null; // recentre once per result, not on every restyle
@@ -140,7 +147,15 @@ export default function MapPanel({ location, pois }: { location: LocationInfo | 
     // would just print the same attribution twice.
     instance.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
 
+    // Three chances to land the data, because there is no single event that
+    // reliably fires *after* the style is ready on every load path. In dev,
+    // StrictMode's double-mount masked this by giving `styledata` a second
+    // run; production mounts once, so a missed `styledata` meant the layers
+    // were never added and the map stayed empty. `sync` is idempotent, so
+    // over-subscribing is free.
     instance.on("styledata", sync);
+    instance.on("load", sync);
+    instance.on("idle", sync);
 
     const popup = new maplibregl.Popup({ closeButton: false, offset: 10 });
     instance.on("mouseenter", "poi-dot", (e) => {
