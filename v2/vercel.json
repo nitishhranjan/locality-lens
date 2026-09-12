@@ -4,7 +4,7 @@
     "api/index.py": {
       "memory": 1024,
       "maxDuration": 300,
-      "excludeFiles": "{node_modules/**,.next/**,app/**,components/**,public/**,.venv-api/**}"
+      "excludeFiles": "{node_modules/**,.next/**,app/**,components/**,public/**,docs/**,tests/**,evals/**,.venv-api/**}"
     }
   },
   "rewrites": [

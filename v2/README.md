@@ -97,6 +97,26 @@ verdict addresses curb ramps and sidewalk width.
 
 ![Free-text profile producing accessibility-focused metrics](docs/screenshots/04-free-text.png)
 
+## Tests and evals
+
+Two different things, kept apart on purpose.
+
+```bash
+pytest                  # deterministic code: 87 tests, ~0.5s, free
+python -m evals.run     # model behaviour: rates over a dataset, costs tokens
+```
+
+`tests/` asserts exact values on pure functions — the park-area CRS bug and
+the score-saturation bug both lived there and each dies to a three-line
+assertion. It also pins the graph's failure routing: single error event per
+failure, no stage left claiming to run, every path ending on a terminal event.
+
+`evals/` measures the two stochastic surfaces: whether the `usable` gate can
+tell a real description from "okay", whether selected metrics fit the
+profile, and whether the written summary ever invents a figure it was not
+given. See [evals/README.md](evals/README.md) — including why the runner
+refuses to report a score when the provider was rate-limiting.
+
 ## Running it
 
 Two processes: Next.js on :3000, FastAPI on :8000. Next proxies `/api/*` to the
@@ -208,7 +228,9 @@ v2/
 │   ├── nodes.py        One function per stage
 │   └── pipeline.py     StateGraph wiring + event stream
 ├── app/                Next.js App Router + design tokens
-└── components/         Agent trace, metric grid, map
+├── components/         Agent trace, metric grid, map
+├── tests/              pytest - deterministic code + graph routing
+└── evals/              model behaviour: datasets, graders, runner
 ```
 
 ## Troubleshooting

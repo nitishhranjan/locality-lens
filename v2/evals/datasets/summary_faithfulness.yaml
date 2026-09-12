@@ -1,0 +1,49 @@
+# Does the written summary invent figures?
+#
+# The model is given a fixed stats block and must write about those numbers.
+# Any number it produces that was not supplied is a fabrication - v1's output
+# claimed Indiranagar was "far above the city average of 15-20 schools per
+# comparable zone", a comparison nobody gave it.
+#
+# No network is involved: stats are synthetic, only the LLM call is live.
+
+cases:
+  - id: dense-family
+    address: "Indiranagar, Bengaluru, Karnataka, India"
+    profile: "Family with kids"
+    priorities: [schools, playgrounds, healthcare]
+    concerns: [traffic, noise]
+    total_pois: 2644
+    metrics:
+      school_count:      {label: Schools,             unit: count, value: 85}
+      kindergarten_count: {label: Kindergartens,       unit: count, value: 15}
+      playground_count:  {label: Playgrounds,         unit: count, value: 30}
+      hospital_count:    {label: "Hospitals & Clinics", unit: count, value: 126}
+      park_area_km2:     {label: Park Area,           unit: km2,   value: 0.25}
+      walkability_score: {label: Walkability,         unit: score, value: 83}
+
+  - id: sparse-suburb
+    address: "Sarjapur Outer Road, Bengaluru, Karnataka, India"
+    profile: "Retired, no car"
+    priorities: [healthcare, transport]
+    concerns: [isolation]
+    total_pois: 118
+    metrics:
+      hospital_count:    {label: "Hospitals & Clinics", unit: count, value: 4}
+      pharmacy_count:    {label: Pharmacies,          unit: count, value: 6}
+      bus_stop_count:    {label: Bus Stops,           unit: count, value: 11}
+      transit_score:     {label: Transit Access,      unit: score, value: 24}
+      walkability_score: {label: Walkability,         unit: score, value: 31}
+
+  - id: nightlife-strip
+    address: "Church Street, Bengaluru, Karnataka, India"
+    profile: "Young professional who likes going out"
+    priorities: [nightlife, dining]
+    concerns: [noise, rent]
+    total_pois: 1902
+    metrics:
+      bar_count:         {label: "Bars & Nightlife",  unit: count, value: 46}
+      restaurant_count:  {label: Restaurants,         unit: count, value: 312}
+      cafe_count:        {label: Cafes,               unit: count, value: 98}
+      nightlife_score:   {label: Nightlife,           unit: score, value: 71}
+      transit_score:     {label: Transit Access,      unit: score, value: 64}

@@ -1,0 +1,47 @@
+# Given a readable description, does the model pick metrics that fit it?
+#
+# Several metric sets are defensible for any one profile, so this does not
+# assert an exact selection. Each case states the weakest defensible claim:
+# at least one obviously-relevant metric present, and nothing that would be
+# plainly wrong for this person.
+
+cases:
+  - id: family
+    input: "Family with two young kids, we want good schools and parks"
+    require_any: [school_count, kindergarten_count]
+    forbid: [nightlife_score, bar_count]
+
+  - id: nightlife
+    input: "Young professional, I go out most weekends and love bars and live music"
+    require_any: [nightlife_score, bar_count, restaurant_count]
+    forbid: [kindergarten_count, playground_count]
+
+  - id: mobility
+    input: "I use a wheelchair, don't drive, and need pharmacies and a doctor close by"
+    require_any: [pharmacy_count, hospital_count]
+    forbid: [nightlife_score, bar_count]
+
+  - id: no-car
+    input: "I don't own a car and rely entirely on public transport"
+    require_any: [transit_score, metro_station_count, bus_stop_count]
+    forbid: []
+
+  - id: green
+    input: "I run every morning and want green space and quiet"
+    require_any: [park_count, park_area_km2, green_score]
+    forbid: [nightlife_score]
+
+  - id: senior
+    input: "Retired couple, we walk to the shops and need a doctor nearby"
+    require_any: [hospital_count, pharmacy_count, walkability_score]
+    forbid: [kindergarten_count]
+
+  - id: student
+    input: "Postgrad student on a budget, need cheap food and a library"
+    require_any: [library_count, cafe_count, restaurant_count]
+    forbid: [hotel_count]
+
+  - id: remote-worker
+    input: "I work from home and need good cafes plus a gym within walking distance"
+    require_any: [cafe_count, gym_count, walkability_score]
+    forbid: [kindergarten_count]
