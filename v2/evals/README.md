@@ -82,7 +82,7 @@ number computed from the handful of calls that survived is worse than no
 number, because it reads as a regression.
 
 If you see exit code 2, the provider was throttling. Re-run, or lower
-`CONCURRENCY`.
+`--rpm`.
 
 ## Thresholds
 

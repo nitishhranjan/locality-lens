@@ -58,8 +58,12 @@ THRESHOLDS = {
 # a 429 scored as a model decision is worse than a slow run. The first
 # version of this file used a pool of 3 and reported 10% recall on the
 # usable gate - every rate-limited call had been counted as "accepted".
-CONCURRENCY = 2
-RETRIES = 4
+# Groq's free tier is a requests-per-minute budget. Bursting into it and
+# retrying makes things worse: the retries are themselves requests. Pacing
+# every call to stay under the budget is what actually works, so requests are
+# serialised and spaced rather than run in parallel.
+DEFAULT_RPM = 26
+RETRIES = 5
 MIN_COVERAGE = 0.8  # refuse to report a score computed on less data than this
 
 
@@ -91,6 +95,37 @@ class CaseResult:
         return sum(runs) / len(runs) if runs else 0.0
 
 
+class Throttle:
+    """Serialise calls and hold them at most `rpm` per minute.
+
+    A semaphore alone caps concurrency but not rate: two workers looping
+    freely still burst well past a per-minute budget. This spaces the *start*
+    of every request instead.
+    """
+
+    def __init__(self, rpm: int):
+        self.interval = 60.0 / max(rpm, 1)
+        self._lock = asyncio.Lock()
+        self._next = 0.0
+
+    async def __aenter__(self):
+        await self._lock.acquire()
+        now = asyncio.get_running_loop().time()
+        if now < self._next:
+            await asyncio.sleep(self._next - now)
+        self._next = asyncio.get_running_loop().time() + self.interval
+        return self
+
+    async def __aexit__(self, *exc):
+        self._lock.release()
+        return False
+
+    def penalise(self, seconds: float) -> None:
+        """After a 429, push the next slot out - we are over budget."""
+        loop = asyncio.get_running_loop()
+        self._next = max(self._next, loop.time() + seconds)
+
+
 # ---------------------------------------------------------------------------
 # Talking to the provider
 # ---------------------------------------------------------------------------
@@ -99,31 +134,37 @@ class CaseResult:
 # looks exactly like "the model accepted this input" unless it is handled
 # explicitly. Retry it, and if it still fails, record the run as inconclusive
 # instead of scoring it.
-async def intent_with_retry(profile: str, location: str) -> dict:
-    delay = 2.0
+async def intent_with_retry(profile: str, location: str, throttle: "Throttle") -> dict:
+    delay = 5.0
     intent: dict = {}
     for attempt in range(RETRIES):
-        intent = await llm.extract_intent(profile, location)
+        async with throttle:
+            intent = await llm.extract_intent(profile, location)
         if intent.get("reason") != "provider_error":
             return intent
         if attempt < RETRIES - 1:
-            await asyncio.sleep(delay + random.random())
+            wait = delay + random.random()
+            throttle.penalise(wait)
+            await asyncio.sleep(wait)
             delay *= 2
     return intent
 
 
-async def summary_with_retry(address, profile, intent, stats, counts) -> str:
-    delay = 2.0
+async def summary_with_retry(address, profile, intent, stats, counts, throttle: "Throttle") -> str:
+    delay = 5.0
     last: Exception | None = None
     for attempt in range(RETRIES):
         try:
-            return "".join(
-                [c async for c in llm.stream_summary(address, profile, intent, stats, counts)]
-            )
+            async with throttle:
+                return "".join(
+                    [c async for c in llm.stream_summary(address, profile, intent, stats, counts)]
+                )
         except Exception as exc:
             last = exc
             if attempt < RETRIES - 1:
-                await asyncio.sleep(delay + random.random())
+                wait = delay + random.random()
+                throttle.penalise(wait)
+                await asyncio.sleep(wait)
                 delay *= 2
     raise last if last else RuntimeError("summary failed")
 
@@ -145,8 +186,7 @@ async def run_usable(runs: int, sem: asyncio.Semaphore) -> list[CaseResult]:
         out.details = []
         for _ in range(runs):
             out.attempted += 1
-            async with sem:
-                intent = await intent_with_retry(case["input"], "Indiranagar, Bangalore")
+            intent = await intent_with_retry(case["input"], "Indiranagar, Bangalore", sem)
             if intent.get("reason") == "provider_error":
                 out.inconclusive += 1
                 out.errors.append((intent.get("error") or "provider error")[:120])
@@ -170,8 +210,7 @@ async def run_relevance(runs: int, sem: asyncio.Semaphore) -> list[CaseResult]:
         out.details = []
         for _ in range(runs):
             out.attempted += 1
-            async with sem:
-                intent = await intent_with_retry(case["input"], "Indiranagar, Bangalore")
+            intent = await intent_with_retry(case["input"], "Indiranagar, Bangalore", sem)
             if intent.get("reason") == "provider_error":
                 out.inconclusive += 1
                 out.errors.append((intent.get("error") or "provider error")[:120])
@@ -200,15 +239,14 @@ async def run_faithfulness(runs: int, sem: asyncio.Semaphore) -> list[CaseResult
 
         for _ in range(runs):
             out.attempted += 1
-            async with sem:
-                try:
-                    text = await summary_with_retry(
-                        case["address"], case["profile"], intent, stats, counts
-                    )
-                except Exception as exc:
-                    out.inconclusive += 1
-                    out.errors.append(str(exc)[:120])
-                    continue
+            try:
+                text = await summary_with_retry(
+                    case["address"], case["profile"], intent, stats, counts, sem
+                )
+            except Exception as exc:
+                out.inconclusive += 1
+                out.errors.append(str(exc)[:200])
+                continue
             out.record("no_invented", graders.graded_faithfulness(text, stats, case["total_pois"]))
             out.record("cites_metrics", graders.graded_cites_metrics(text, stats))
             out.record("names_tradeoff", graders.graded_names_a_tradeoff(text))
@@ -327,6 +365,8 @@ async def main() -> int:
     parser.add_argument("--suite", choices=[*SUITES, "all"], default="all")
     parser.add_argument("--runs", type=int, default=3, help="repeats per case")
     parser.add_argument("--save-baseline", action="store_true")
+    parser.add_argument("--rpm", type=int, default=DEFAULT_RPM,
+                        help="requests per minute budget (Groq free tier is tight)")
     args = parser.parse_args()
 
     cfg = provider_config()
@@ -335,7 +375,7 @@ async def main() -> int:
         return 2
 
     chosen = list(SUITES) if args.suite == "all" else [args.suite]
-    sem = asyncio.Semaphore(CONCURRENCY)
+    sem = Throttle(args.rpm)
     started = time.perf_counter()
 
     results: list[CaseResult] = []
@@ -403,7 +443,7 @@ async def main() -> int:
         print(
             f"INCONCLUSIVE: only {coverage:.0%} of runs returned a verdict "
             f"({inconclusive} failed). The provider was rate-limiting or down; "
-            f"scores are not meaningful. Re-run, or lower CONCURRENCY.",
+            f"scores are not meaningful. Re-run, or lower --rpm.",
             file=sys.stderr,
         )
         return 2
