@@ -284,9 +284,15 @@ def score(results: list[CaseResult]) -> dict[str, float]:
         for check in ("no_invented", "cites_metrics", "names_tradeoff", "shape"):
             out[f"faithfulness.{check}"] = statistics.mean(r.rate(check) for r in faith)
 
-    out["_coverage"] = (
-        statistics.mean(r.coverage for r in results if r.attempted) if results else 0.0
-    )
+    # Coverage per suite, not overall. A mean hides a suite that was wiped
+    # out: 70% overall once meant relevance lost 8 cases out of 8 while
+    # faithfulness lost none, and the run still published scores.
+    for suite in sorted({r.suite for r in results}):
+        rows = [r for r in results if r.suite == suite and r.attempted]
+        if rows:
+            out[f"_coverage.{suite}"] = statistics.mean(r.coverage for r in rows)
+    covs = [v for k, v in out.items() if k.startswith("_coverage.")]
+    out["_coverage"] = min(covs) if covs else 0.0
 
     advisory = [r for r in results if r.taxonomy.startswith("advisory")]
     if advisory:
@@ -303,7 +309,13 @@ def report(results: list[CaseResult], scores: dict[str, float], meta: dict) -> s
         f"- **When** {meta['when']}",
         f"- **Provider** `{meta['provider']}` · intent `{meta['intent_model']}` · summary `{meta['summary_model']}`",
         f"- **Runs per case** {meta['runs']} · **cases** {len(results)} · **duration** {meta['duration']:.0f}s",
-        f"- **Coverage** {scores.get('_coverage', 0):.0%} of runs returned a verdict"
+        "- **Coverage** "
+        + ", ".join(
+            f"{k.split('.', 1)[1]} {v:.0%}"
+            for k, v in sorted(scores.items())
+            if k.startswith("_coverage.")
+        )
+        + f" (worst {scores.get('_coverage', 0):.0%})"
         + ("" if scores.get("_coverage", 0) >= MIN_COVERAGE
            else f"  ⚠️ **below {MIN_COVERAGE:.0%} — scores below are unreliable, the provider was failing**"),
         "",
@@ -428,25 +440,31 @@ async def main() -> int:
             print(f"- {note}")
         print()
 
+    coverage = scores.get("_coverage", 0.0)
+    if coverage < MIN_COVERAGE:
+        # Reporting a quality score computed from a handful of surviving runs
+        # is worse than reporting nothing: it looks like a model regression.
+        inconclusive = sum(r.inconclusive for r in results)
+        worst = min(
+            ((k.split(".", 1)[1], v) for k, v in scores.items() if k.startswith("_coverage.")),
+            key=lambda kv: kv[1],
+            default=("?", 0.0),
+        )
+        print(
+            f"INCONCLUSIVE: suite {worst[0]!r} returned a verdict for only {coverage:.0%} of runs "
+            f"({inconclusive} failed). The provider was rate-limiting or down; "
+            f"scores are not meaningful. Re-run, or lower --rpm.",
+            file=sys.stderr,
+        )
+        return 2
+
+    # Only a run that cleared the coverage gate is fit to become the bar.
     if args.save_baseline:
         BASELINE.write_text(json.dumps(
             {"meta": meta, "scores": {k: v for k, v in scores.items() if not k.startswith("_")}},
             indent=2,
         ))
         print(f"baseline written to {BASELINE.relative_to(ROOT)}")
-
-    coverage = scores.get("_coverage", 0.0)
-    if coverage < MIN_COVERAGE:
-        # Reporting a quality score computed from a handful of surviving runs
-        # is worse than reporting nothing: it looks like a model regression.
-        inconclusive = sum(r.inconclusive for r in results)
-        print(
-            f"INCONCLUSIVE: only {coverage:.0%} of runs returned a verdict "
-            f"({inconclusive} failed). The provider was rate-limiting or down; "
-            f"scores are not meaningful. Re-run, or lower --rpm.",
-            file=sys.stderr,
-        )
-        return 2
 
     failed = [k for k, v in scores.items() if k in THRESHOLDS and v < THRESHOLDS[k]]
     if failed:

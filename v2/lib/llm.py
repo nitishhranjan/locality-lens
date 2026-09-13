@@ -194,10 +194,15 @@ async def extract_intent(profile: str, location: str) -> dict[str, Any]:
             break
 
     if parsed is None:
-        fallback["reason"] = "unreadable_profile" if unreadable else "provider_error"
+        # `unreadable` only counts if nothing else went wrong. A run that hit
+        # a JSON failure and then a rate limit never got a verdict on the
+        # text, and reporting it as unreadable would tell the user to reword
+        # something that may have been perfectly fine - the expensive error.
+        blamed_the_text = unreadable and not errors
+        fallback["reason"] = "unreadable_profile" if blamed_the_text else "provider_error"
         fallback["hint"] = (
             UNREADABLE_HINT
-            if unreadable
+            if blamed_the_text
             else "The language model could not be reached, so a standard metric set was used."
         )
         fallback["error"] = " | ".join(errors)[:240] or "model could not produce a usable response"
