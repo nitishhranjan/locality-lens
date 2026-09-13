@@ -63,7 +63,12 @@ THRESHOLDS = {
 # every call to stay under the budget is what actually works, so requests are
 # serialised and spaced rather than run in parallel.
 DEFAULT_RPM = 26
-RETRIES = 5
+RETRIES = 3
+# Stop the whole run once the provider is clearly out of budget. Groq's free
+# tier has a daily request cap as well as a per-minute one, and pacing cannot
+# help with a daily cap - a run that keeps backing off into an exhausted quota
+# spent 3.9 hours producing nothing usable.
+ABORT_AFTER_CONSECUTIVE_FAILURES = 8
 MIN_COVERAGE = 0.8  # refuse to report a score computed on less data than this
 
 
@@ -93,6 +98,32 @@ class CaseResult:
     def rate(self, name: str) -> float:
         runs = self.checks.get(name) or []
         return sum(runs) / len(runs) if runs else 0.0
+
+
+class QuotaExhausted(RuntimeError):
+    """The provider stopped answering; no point continuing the sweep."""
+
+
+class Budget:
+    """Circuit breaker over consecutive provider failures."""
+
+    def __init__(self, limit: int = ABORT_AFTER_CONSECUTIVE_FAILURES):
+        self.limit = limit
+        self.consecutive = 0
+        self.failures = 0
+
+    def check(self) -> None:
+        if self.consecutive >= self.limit:
+            raise QuotaExhausted(
+                f"{self.consecutive} consecutive provider failures - aborting"
+            )
+
+    def success(self) -> None:
+        self.consecutive = 0
+
+    def failure(self) -> None:
+        self.consecutive += 1
+        self.failures += 1
 
 
 class Throttle:
@@ -134,14 +165,19 @@ class Throttle:
 # looks exactly like "the model accepted this input" unless it is handled
 # explicitly. Retry it, and if it still fails, record the run as inconclusive
 # instead of scoring it.
-async def intent_with_retry(profile: str, location: str, throttle: "Throttle") -> dict:
+async def intent_with_retry(
+    profile: str, location: str, throttle: "Throttle", budget: "Budget"
+) -> dict:
     delay = 5.0
     intent: dict = {}
     for attempt in range(RETRIES):
+        budget.check()
         async with throttle:
             intent = await llm.extract_intent(profile, location)
         if intent.get("reason") != "provider_error":
+            budget.success()
             return intent
+        budget.failure()
         if attempt < RETRIES - 1:
             wait = delay + random.random()
             throttle.penalise(wait)
@@ -150,17 +186,25 @@ async def intent_with_retry(profile: str, location: str, throttle: "Throttle") -
     return intent
 
 
-async def summary_with_retry(address, profile, intent, stats, counts, throttle: "Throttle") -> str:
+async def summary_with_retry(
+    address, profile, intent, stats, counts, throttle: "Throttle", budget: "Budget"
+) -> str:
     delay = 5.0
     last: Exception | None = None
     for attempt in range(RETRIES):
+        budget.check()
         try:
             async with throttle:
-                return "".join(
+                text = "".join(
                     [c async for c in llm.stream_summary(address, profile, intent, stats, counts)]
                 )
+            budget.success()
+            return text
+        except QuotaExhausted:
+            raise
         except Exception as exc:
             last = exc
+            budget.failure()
             if attempt < RETRIES - 1:
                 wait = delay + random.random()
                 throttle.penalise(wait)
@@ -172,7 +216,7 @@ async def summary_with_retry(address, profile, intent, stats, counts, throttle: 
 # ---------------------------------------------------------------------------
 # Suites
 # ---------------------------------------------------------------------------
-async def run_usable(runs: int, sem: asyncio.Semaphore) -> list[CaseResult]:
+async def run_usable(runs: int, sem: "Throttle", budget: "Budget") -> list[CaseResult]:
     data = yaml.safe_load((DATASETS / "intent_usable.yaml").read_text())
     cases = (
         [(c, False, "unusable") for c in data["unusable"]]
@@ -186,7 +230,7 @@ async def run_usable(runs: int, sem: asyncio.Semaphore) -> list[CaseResult]:
         out.details = []
         for _ in range(runs):
             out.attempted += 1
-            intent = await intent_with_retry(case["input"], "Indiranagar, Bangalore", sem)
+            intent = await intent_with_retry(case["input"], "Indiranagar, Bangalore", sem, budget)
             if intent.get("reason") == "provider_error":
                 out.inconclusive += 1
                 out.errors.append((intent.get("error") or "provider error")[:120])
@@ -201,7 +245,7 @@ async def run_usable(runs: int, sem: asyncio.Semaphore) -> list[CaseResult]:
     return list(await asyncio.gather(*(one(c, e, g) for c, e, g in cases)))
 
 
-async def run_relevance(runs: int, sem: asyncio.Semaphore) -> list[CaseResult]:
+async def run_relevance(runs: int, sem: "Throttle", budget: "Budget") -> list[CaseResult]:
     data = yaml.safe_load((DATASETS / "intent_relevance.yaml").read_text())
 
     async def one(case):
@@ -210,7 +254,7 @@ async def run_relevance(runs: int, sem: asyncio.Semaphore) -> list[CaseResult]:
         out.details = []
         for _ in range(runs):
             out.attempted += 1
-            intent = await intent_with_retry(case["input"], "Indiranagar, Bangalore", sem)
+            intent = await intent_with_retry(case["input"], "Indiranagar, Bangalore", sem, budget)
             if intent.get("reason") == "provider_error":
                 out.inconclusive += 1
                 out.errors.append((intent.get("error") or "provider error")[:120])
@@ -225,7 +269,7 @@ async def run_relevance(runs: int, sem: asyncio.Semaphore) -> list[CaseResult]:
     return list(await asyncio.gather(*(one(c) for c in data["cases"])))
 
 
-async def run_faithfulness(runs: int, sem: asyncio.Semaphore) -> list[CaseResult]:
+async def run_faithfulness(runs: int, sem: "Throttle", budget: "Budget") -> list[CaseResult]:
     """No network: synthetic stats in, prose out, checked against the inputs."""
     data = yaml.safe_load((DATASETS / "summary_faithfulness.yaml").read_text())
 
@@ -241,7 +285,7 @@ async def run_faithfulness(runs: int, sem: asyncio.Semaphore) -> list[CaseResult
             out.attempted += 1
             try:
                 text = await summary_with_retry(
-                    case["address"], case["profile"], intent, stats, counts, sem
+                    case["address"], case["profile"], intent, stats, counts, sem, budget
                 )
             except Exception as exc:
                 out.inconclusive += 1
@@ -388,12 +432,32 @@ async def main() -> int:
 
     chosen = list(SUITES) if args.suite == "all" else [args.suite]
     sem = Throttle(args.rpm)
+    budget = Budget()
+
+    planned = sum(
+        {"usable": 47, "relevance": 8, "faithfulness": 3}.get(n, 0) for n in chosen
+    ) * args.runs
+    print(
+        f"at least {planned} model calls at {args.rpm}/min "
+        f"(~{planned / max(args.rpm, 1):.0f} min clean; up to {RETRIES}x that if throttled)",
+        file=sys.stderr,
+    )
     started = time.perf_counter()
 
     results: list[CaseResult] = []
     for name in chosen:
         print(f"running {name}…", file=sys.stderr)
-        results += await SUITES[name](args.runs, sem)
+        try:
+            results += await SUITES[name](args.runs, sem, budget)
+        except QuotaExhausted as exc:
+            print(f"\nABORTED: {exc}", file=sys.stderr)
+            print(
+                "The provider is out of budget - Groq's free tier caps requests per "
+                "day as well as per minute, and pacing cannot help with a daily cap. "
+                "Wait for the reset, run one suite at a time, or use --runs 1.",
+                file=sys.stderr,
+            )
+            return 2
 
     # Let in-flight stream teardown finish before closing the pools,
     # otherwise httpcore logs 'generator didn't stop after athrow()'.

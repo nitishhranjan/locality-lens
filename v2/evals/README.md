@@ -84,6 +84,23 @@ number, because it reads as a regression.
 If you see exit code 2, the provider was throttling. Re-run, or lower
 `--rpm`.
 
+## Budget
+
+Groq's free tier caps requests **per day** as well as per minute. A full
+sweep at 3 repeats is ~174 calls, which is more than a day's budget once
+you have also been developing against it.
+
+Pacing (`--rpm`) fixes per-minute throttling. It cannot fix a daily cap, and
+retrying into an exhausted quota is worse than useless - an early version of
+this runner spent 3.9 hours backing off and produced nothing. The runner now
+aborts after 8 consecutive provider failures and says so.
+
+Practical options when the budget is tight:
+
+- run one suite at a time (`--suite relevance`)
+- `--runs 1` for a smoke check, `--runs 3+` only for a baseline
+- point `LLM_PROVIDER` at a paid OpenAI key for baseline runs
+
 ## Thresholds
 
 `THRESHOLDS` in `run.py` are **placeholders**. Where the bar sits is a product
